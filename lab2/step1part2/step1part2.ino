@@ -3,10 +3,10 @@
  * Date: 2026/7/7
  * Description: This file controls the blinking of an external LED connected
  *              to the ESP32.
- * Details: This file features direct manipulation of the GPIO pin through
- *          register access. It has two implementations that can be commented
- *          and uncommented. The first uses the delay function, while the second
- *          produces a non-block delay with a timer.
+ * Details: This file manipulates the LED in two ways: 1) direct manipulation of
+ *          the GPIO pin through register access and 2) the built-in Arduino
+ *          functions. It compares the speed of these two functions and prints
+ *          the time they each take to turn the LED on and then off. 
  */
 #include "driver/gpio.h"            // For GPIO driver-level macros
 #include "soc/io_mux_reg.h"         // For configuring the MUX (multiplexer)
@@ -24,10 +24,11 @@ static int repetition_count;
  **************************************************/
 void setup() {
   PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN_FIVE], PIN_FUNC_GPIO);
-  pinMode(GPIO_PIN_SIX, OUTPUT);
 
   // Enable GPIO_Pin as Output
   *((volatile uint32_t *) GPIO_ENABLE_REG) |= 1 << GPIO_PIN_FIVE;
+
+  pinMode(GPIO_PIN_SIX, OUTPUT);
 
   Serial.begin(115200);
 }
@@ -41,6 +42,7 @@ void loop() {
   }
 
   uint32_t elapsed = micros() - initial;
+  Serial.print("Register Access: ");
   Serial.print(elapsed, DEC);
   Serial.println(" microseconds");
 
@@ -54,6 +56,7 @@ void loop() {
   }
 
   elapsed = micros() - initial;
+  Serial.print("Arduino Language Functions: ")
   Serial.print(elapsed, DEC);
   Serial.println(" microseconds");
 }
