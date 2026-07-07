@@ -14,77 +14,46 @@
 #include "soc/gpio_periph.h"        // For GPIO pin definitions
 
 // --- Constants --- //
-#define GPIO_PIN 5    // GPIO pin connected to the LED-
+#define GPIO_PIN_FIVE 5    // GPIO pin connected to the LED-
+#define GPIO_PIN_SIX 6
 
 static int repetition_count;
 
 /**************************************************
  *              Using Register Access             *
  **************************************************/
-/*
 void setup() {
-  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[5], PIN_FUNC_GPIO);
+  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN_FIVE], PIN_FUNC_GPIO);
+  pinMode(GPIO_PIN_SIX, OUTPUT);
 
   // Enable GPIO_Pin as Output
-  *((volatile uint32_t *) GPIO_ENABLE_REG) |= 1 << GPIO_PIN;
-  
-  repetition_count = 0;
+  *((volatile uint32_t *) GPIO_ENABLE_REG) |= 1 << GPIO_PIN_FIVE;
 
   Serial.begin(115200);
 }
 
 void loop() {
-  // Turn the LED On
-  *((volatile uint32_t *) GPIO_OUT_REG) |= 1 << GPIO_PIN;
+  uint32_t initial = micros();
 
-  // Wait for 1 second
-  delay(10);
-
-  // Turn the LED Off
-  *((volatile uint32_t *) GPIO_OUT_REG) &= ~(1 << GPIO_PIN);
-
-  // Wait again
-  delay(10);
-
-  ++repetition_count;
-
-  if (repetition_count == 1000) {
-    uint32_t time_to_completion = micros();
-    Serial.print(time_to_completion, DEC);
-    Serial.println(" microseconds");
+  for (int i = 0; i < 1000; ++i) {
+    *((volatile uint32_t *) GPIO_OUT_REG) |= 1 << GPIO_PIN_FIVE;
+    *((volatile uint32_t *) GPIO_OUT_REG) &= ~(1 << GPIO_PIN_FIVE);
   }
-}
-*/
 
-/**************************************************
- *             Using Ardunio Functions            *
- **************************************************/
-void setup() {
-  pinMode(GPIO_PIN, OUTPUT);
+  uint32_t elapsed = micros() - initial;
+  Serial.print(elapsed, DEC);
+  Serial.println(" microseconds");
+
+  delay(1000);
+
+  initial = micros();
   
-  repetition_count = 0;
-
-  Serial.begin(115200);
-}
-
-void loop() {
-  // Turn the LED On
-  digitalWrite(GPIO_PIN, HIGH);
-
-  // Wait for 1 second
-  delay(10);
-
-  // Turn the LED Off
-  digitalWrite(GPIO_PIN, LOW);
-
-  // Wait again
-  delay(10);
-
-  ++repetition_count;
-
-  if (repetition_count == 1000) {
-    uint32_t time_to_completion = micros();
-    Serial.print(time_to_completion, DEC);
-    Serial.println(" microseconds");
+  for (int j = 0; j < 1000; ++j) {
+    digitalWrite(GPIO_PIN_SIX, HIGH);
+    digitalWrite(GPIO_PIN_SIX, LOW);
   }
+
+  elapsed = micros() - initial;
+  Serial.print(elapsed, DEC);
+  Serial.println(" microseconds");
 }
