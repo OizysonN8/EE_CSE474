@@ -14,14 +14,11 @@
 #include "soc/gpio_periph.h"        // For GPIO pin definitions
 
 // --- Constants --- //
-#define GPIO_PIN_FIVE 5    // GPIO pin connected to the LED-
+#define GPIO_PIN_FIVE 5
 #define GPIO_PIN_SIX 6
 
 static int repetition_count;
 
-/**************************************************
- *              Using Register Access             *
- **************************************************/
 void setup() {
   PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN_FIVE], PIN_FUNC_GPIO);
 
@@ -36,7 +33,8 @@ void setup() {
 void loop() {
   uint32_t initial = micros();
 
-  for (int i = 0; i < 1000; ++i) {
+  // flash register manipulated LED
+  for (int i = 0; i < 1000; ++i) { 
     *((volatile uint32_t *) GPIO_OUT_REG) |= 1 << GPIO_PIN_FIVE;
     *((volatile uint32_t *) GPIO_OUT_REG) &= ~(1 << GPIO_PIN_FIVE);
   }
@@ -50,6 +48,7 @@ void loop() {
 
   initial = micros();
   
+  // Flash Arduino macro function manipulated LED
   for (int j = 0; j < 1000; ++j) {
     digitalWrite(GPIO_PIN_SIX, HIGH);
     digitalWrite(GPIO_PIN_SIX, LOW);
