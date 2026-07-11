@@ -1,7 +1,8 @@
 /* Filename: step2step3.ino
  * Author: Armina Moghadasi and Nathaniel Wagner
  * Date: 2026/7/9
- * Description: TODO: Put the description here
+ * Description: This module is used to compare the speed of the arduino macro
+ *              functions in comparison to direct register access
  */
 #include "driver/gpio.h"            // For GPIO driver-level macros
 #include "soc/io_mux_reg.h"         // For configuring the MUX (multiplexer)
@@ -12,7 +13,9 @@
 #define GPIO_PIN_FIVE 5    // GPIO pin connected to the LED-
 #define GPIO_PIN_SIX 6
 
-/*******kjk*******************************************
+#define ITERATIONS 1000
+
+/**************************************************
  *              Using Register Access             *
  **************************************************/
 void setup() {
@@ -29,7 +32,8 @@ void setup() {
 void loop() {
   uint32_t initial = micros();
 
-  for (int i = 0; i < 1000; ++i) {
+  // Blink LED ITERATIONS times using direct register manipulation
+  for (int i = 0; i < ITERATIONS; ++i) {
     *((volatile uint32_t *) GPIO_OUT_REG) |= 1 << GPIO_PIN_FIVE;
     *((volatile uint32_t *) GPIO_OUT_REG) &= ~(1 << GPIO_PIN_FIVE);
   }
@@ -43,7 +47,8 @@ void loop() {
 
   initial = micros();
   
-  for (int j = 0; j < 1000; ++j) {
+  // Blink LED ITERATIONS times using the arduino macro functions
+  for (int j = 0; j < ITERATIONS; ++j) {
     digitalWrite(GPIO_PIN_SIX, HIGH);
     digitalWrite(GPIO_PIN_SIX, LOW);
   }
