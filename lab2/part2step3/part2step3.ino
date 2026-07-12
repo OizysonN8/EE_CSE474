@@ -1,60 +1,67 @@
-/* Filename: step2step3.ino
+/* Filename: part2step3.ino
  * Author: Armina Moghadasi and Nathaniel Wagner
- * Date: 2026/7/9
- * Description: This module is used to compare the speed of the arduino macro
- *              functions in comparison to direct register access
+ * Date: 2026/7/7
+ * Description: This file controls the blinking of an external LED connected
+ *              to the ESP32.
+ * Details: This file is implemented using direct register access for both the
+ *          LED toggling and the timer.
  */
-#include "driver/gpio.h"            // For GPIO driver-level macros
-#include "soc/io_mux_reg.h"         // For configuring the MUX (multiplexer)
-#include "soc/gpio_reg.h"           // For direct GPIO register access
-#include "soc/gpio_periph.h"        // For GPIO pin definitions
+#include "driver/gpio.h"
+#include "soc/io_mux_reg.h"
+#include "soc/gpio_reg.h"
+#include "soc/gpio_periph.h"
+#include "soc/timer_group_reg.h"
 
-// --- Constants --- //
-#define GPIO_PIN_FIVE 5    // GPIO pin connected to the LED-
-#define GPIO_PIN_SIX 6
+#define GPIO_PIN 5
 
-#define ITERATIONS 1000
+#define LED_TOGGLE_INTERVAL 1000000 // for 80 MHz clock divided by 80
 
-/**************************************************
- *              Using Register Access             *
- **************************************************/
+#define TIMER_ENABLE         (1U << 31)
+#define TIMER_INCREMENT_MODE (1U << 30)
+
 void setup() {
-  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN_FIVE], PIN_FUNC_GPIO);
+  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[5], PIN_FUNC_GPIO);
 
   // Enable GPIO_Pin as Output
-  *((volatile uint32_t *) GPIO_ENABLE_REG) |= 1 << GPIO_PIN_FIVE;
+  *((volatile uint32_t *) GPIO_ENABLE_REG) |= 1 << GPIO_PIN;
 
-  pinMode(GPIO_PIN_SIX, OUTPUT);
+  uint32_t timer_config = 0;
 
-  Serial.begin(115200);
+  // Apply clock divider
+  timer_config |= (80 << 13);
+
+  // Set increment mode and enable timer
+  timer_config |= TIMER_INCREMENT_MODE | TIMER_ENABLE;
+
+  // Write config to timer register
+  *((volatile uint32_t *) TIMG_T0CONFIG_REG(0)) = timer_config;
+
+  // Trigger a timer update to load settings
+  *((volatile uint32_t *) TIMG_T0UPDATE_REG(0)) = 1;
 }
 
 void loop() {
-  uint32_t initial = micros();
+  // Track last toggle time
+  static uint32_t last_toggle_time = 0;
 
-  // Blink LED ITERATIONS times using direct register manipulation
-  for (int i = 0; i < ITERATIONS; ++i) {
-    *((volatile uint32_t *) GPIO_OUT_REG) |= 1 << GPIO_PIN_FIVE;
-    *((volatile uint32_t *) GPIO_OUT_REG) &= ~(1 << GPIO_PIN_FIVE);
+  // Refresh timer counter value
+  // Done before reading to read fresh value
+  *((volatile uint32_t *) TIMG_T0UPDATE_REG(0)) = 1;
+
+  // Read current timer value
+  uint32_t current_time = 0;
+  current_time = *((volatile uint32_t *) TIMG_T0LO_REG(0));
+
+  // Check if toggle interval has passed
+  if ((current_time - last_toggle_time) >= LED_TOGGLE_INTERVAL) {
+    // Read current GPIO output state
+    uint32_t gpio_out = 0;
+    gpio_out = *((volatile uint32_t *) GPIO_OUT_REG);
+
+    // Toggle GPIO_PIN using XOR
+    *((volatile uint32_t *) GPIO_OUT_REG) = gpio_out ^ (1 << GPIO_PIN);
+
+    // Update last_toggle_time
+    last_toggle_time = current_time;
   }
-
-  uint32_t elapsed = micros() - initial;
-  Serial.print("Register Access: ");
-  Serial.print(elapsed, DEC);
-  Serial.println(" microseconds");
-
-  delay(1000);
-
-  initial = micros();
-  
-  // Blink LED ITERATIONS times using the arduino macro functions
-  for (int j = 0; j < ITERATIONS; ++j) {
-    digitalWrite(GPIO_PIN_SIX, HIGH);
-    digitalWrite(GPIO_PIN_SIX, LOW);
-  }
-
-  elapsed = micros() - initial;
-  Serial.print("Arduino Language Functions: ")
-  Serial.print(elapsed, DEC);
-  Serial.println(" microseconds");
 }
