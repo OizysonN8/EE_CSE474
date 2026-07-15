@@ -12,19 +12,26 @@
 #include "soc/gpio_reg.h"
 #include "soc/gpio_periph.h"
 #include "soc/timer_group_reg.h"
+#include "driver/adc.h" 
 
-#define FIRST_GPIO_PIN 5
-#define SECOND_GPIO_PIN 6
+#define GPIO_PIN1 5
+#define GPIO_PIN2 6
 
 #define CLOCK_DIVIDER        (40000 << 13) // 80Mhz / 40000 = 2000 Hz -> 0.5 ms/tick
 #define TIMER_ENABLE         (1U << 31)
 #define TIMER_INCREMENT_MODE (1U << 30)
+#define POT_ADC_CHANNEL ADC1_CHANNEL_0  // ADC1_CHANNEL_0 maps to GPIO1 on ESP32-S3
 
 uint32_t last_ran[3] = {0, 0, 0};
-uint32_t interval_in_ms[3] = {1000, 2000, 500};  // TODO: Interval for each task in ms
+uint32_t interval_in_ms[3] = {1000, 2000, 500};  // Interval for each task in ms
 uint32_t interval_in_ticks[3];
 
+bool led1 = false;
+bool led2 = false;
+
 void setup() {
+  Serial.begin(115200);
+
   // Convert ms to ticks
   for (int i = 0; i < 3; i++) {
     interval_in_ticks[i] = interval_in_ms[i] * 2;
@@ -42,7 +49,21 @@ void setup() {
   // Trigger a timer update to load settings
   *((volatile uint32_t *) TIMG_T0UPDATE_REG(0)) = 1;
 
-  // TODO: Register setup for GPIO pins and analog read
+  //specify pin function as GPIO input
+  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN1], PIN_FUNC_GPIO);
+  PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[GPIO_PIN2], PIN_FUNC_GPIO);
+
+  //initalize gpio enable for ledpin1
+  volatile uint32_t* gpio_enable1 = (volatile uint32_t*) GPIO_ENABLE_REG;
+  *gpio_enable1 |= (1 << GPIO_PIN1);
+
+  //intialize gpio enable for ledpin2
+  volatile uint32_t* gpio_enable2 = (volatile uint32_t*) GPIO_ENABLE_REG;
+  *gpio_enable2 |= (1 << GPIO_PIN2);
+
+  //set up analog reading
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(POT_ADC_CHANNEL, ADC_ATTEN_DB_11);
 }
 
 void loop() {
@@ -76,16 +97,28 @@ void runTask(int task_index) {
 
 // Toggles the first LED
 void taskOne(void) {
-    // TODO: Complete function
+    volatile uint32_t* gpio_out = (volatile uint32_t*)GPIO_OUT_REG;
+    led1 = !led1;
+    if(led1)
+      *gpio_out |= (1 << GPIO_PIN1);
+    else 
+      *gpio_out &= ~(1 << GPIO_PIN1);
 }
 
 // Toggles the second LED
 void taskTwo(void) {
-    // TODO: Complete function
+    volatile uint32_t* gpio_out = (volatile uint32_t*)GPIO_OUT_REG;
+    led2 = !led2;
+    if(led2)
+      *gpio_out |= (1 << GPIO_PIN2);
+    else
+      *gpio_out &= ~(1 << GPIO_PIN2);
 }
 
 // Takes a reading from an analog potentiometer
 // and prints it to the Serial Monitor
 void taskThree(void) {
-    // TODO: Complete function
+    int pot_value = adc1_get_raw(POT_ADC_CHANNEL);
+    Serial.print("Potentiometer: ");
+    Serial.println(pot_value);
 }
