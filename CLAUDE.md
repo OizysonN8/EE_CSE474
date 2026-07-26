@@ -3,33 +3,29 @@
 ## Board and hardware
 
 - Board: ESP32-S3 (DevKitC-1).
-- Pinout reference: TODO: PUT SOMETHING HERE
+- Pinout reference: [\[link\]](https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32s3/esp32-s3-devkitc-1/user_guide_v1.1.html#hardware-reference)
 - Peripherals I use in this course: external LEDs and 220 Ω resistors, breadboard, I2C
   LCD (PCF8574T backpack, address 0x27), tactile button, photoresistor, passive buzzer.
 
 ## Toolchain
 
 - IDE: Arduino IDE 2.3.10
-- ESP32 Arduino core: [version, e.g., 3.x]. The API changes between 2.x and 3.x, so tell
-  the AI which one you are on. TODO: PUT SOMETHING HERE
+- ESP32 Arduino core: 3.3.11
 - Serial monitor baud: 115200
 
 ## Datasheets and references (attach or link these for the AI)
 
 - ESP32-S3 Technical Reference Manual (TRM): [\[link; note the pages you use\]](https://documentation.espressif.com/esp32_technical_reference_manual_en.pdf)
 - PCF8574T I2C LCD backpack datasheet: [\[link\]](https://www.ti.com/lit/ds/symlink/pcf8574.pdf)
-- Any peripheral datasheets for the current lab: TODO: ANYTHING TO PUT HERE?
+- Any peripheral datasheets for the current lab: N/A
 
 ## My coding conventions
 
 - Follow general Doxygen naming standards (camelCase for functions, snake_case for variables, SCREAMING_CASE for macros)
 - Use small functions with no magic numbers.
-- TODO: ANY OTHER STYLE CONVENTIONS?!
+- Follow the Google style guide for C/C++. [\[LINK\]](https://google.github.io/styleguide/cppguide.html)
 
 ## Sample code from my past work (paste or link)
-
-Give the AI one or two of your own sketches from earlier labs so it matches your style
-and hardware instead of a generic Arduino example.
 
 ```cpp
 /* Filename: part4step5.ino
