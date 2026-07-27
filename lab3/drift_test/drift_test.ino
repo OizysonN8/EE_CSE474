@@ -1,23 +1,18 @@
 /*
- * Filename: counter_polling_library_fixed.ino
+ * Filename: counter_interrupt_api.ino
  * Author: Nathaniel Wagner
- * Description: Displays a seconds counter on an I2C LCD using only the
- *              LiquidCrystal_I2C library's built-in functions. Counter
- *              increments via polling a free-running hardware timer
- *              (TIMG0, Timer 0). A button on GPIO21 triggers a GPIO
- *              interrupt that pauses the counter and shows "Button
- *              Pressed" for 2 seconds. configureButton() now uses only
- *              the ESP-IDF gpio driver API (gpio_set_direction,
- *              gpio_set_pull_mode, gpio_set_intr_type) instead of mixing
- *              raw register writes with the driver's ISR service, which
- *              was silently overriding the manual interrupt config and
- *              preventing the button interrupt from firing.
+ * Description: Displays a seconds counter on an I2C LCD, incremented by
+ *              a true hardware timer interrupt (timerAttachInterrupt),
+ *              rather than polling a timer register in loop(). A button
+ *              on BUTTON_PIN uses attachInterrupt() with FALLING mode to
+ *              trigger a "Button Pressed" message on the LCD for 2
+ *              seconds before the counter resumes. Uses only the
+ *              Arduino/ESP32 core interrupt APIs, no raw ESP-IDF gpio
+ *              driver calls and no raw TIMG register access.
  */
 
 #include <Wire.h>
 #include <LiquidCrystal_I2C.h>
-#include "driver/gpio.h"
-#include "soc/timer_group_reg.h"
 
 #define SDA_PIN 17
 #define SCL_PIN 18
@@ -29,10 +24,18 @@ LiquidCrystal_I2C lcd(LCD_ADDR, 16, 2);
 #define DEBOUNCE_INTERVAL_MS 50
 #define BUTTON_MESSAGE_DURATION_MS 2000
 
-#define TIMER_CLOCK_DIVIDER 80
-#define ONE_SECOND_IN_TICKS 1000000
+// Hardware timer fires once per second. timerBegin() takes the desired
+// tick frequency in Hz (1,000,000 = 1 tick per microsecond), and
+// timerAlarm() sets the alarm value in ticks, so 1,000,000 ticks at a
+// 1MHz tick rate equals exactly 1 second between interrupts.
+#define TIMER_FREQUENCY_HZ 1000000
+#define TIMER_ALARM_TICKS 1000000
+
+hw_timer_t *counterTimer = NULL;
 
 volatile uint32_t counter = 0;
+volatile bool counterUpdated = false;
+
 volatile bool buttonPressed = false;
 volatile uint32_t lastButtonInterruptMillis = 0;
 
@@ -43,34 +46,25 @@ void lcdPrint(const char *message) {
   lcd.print(message);
 }
 
-void IRAM_ATTR onButtonPress(void *arg) {
+// Timer ISR: fires once per second based on the hardware alarm, not a
+// polled comparison. Keeps work minimal - just increments the counter
+// and sets a flag for loop() to pick up, since LCD/I2C calls should not
+// be made directly from an ISR context.
+void IRAM_ATTR onTimerInterrupt() {
+  counter++;
+  counterUpdated = true;
+}
+
+// Button ISR: fires on FALLING edge via attachInterrupt(). Debounces in
+// software using millis(), same as before, but registration now goes
+// through the single Arduino attachInterrupt() API instead of manual
+// ESP-IDF gpio driver calls.
+void IRAM_ATTR onButtonPress() {
   uint32_t nowMillis = millis();
   if ((nowMillis - lastButtonInterruptMillis) >= DEBOUNCE_INTERVAL_MS) {
     buttonPressed = true;
     lastButtonInterruptMillis = nowMillis;
   }
-}
-
-void configureTimer() {
-  uint32_t timerConfig = 0;
-  timerConfig |= (TIMER_CLOCK_DIVIDER << 13);
-  timerConfig |= TIMG_T0_INCREASE_M;
-  timerConfig |= TIMG_T0_EN_M;
-
-  *((volatile uint32_t *) TIMG_T0CONFIG_REG(0)) = timerConfig;
-  *((volatile uint32_t *) TIMG_T0UPDATE_REG(0)) = 1;
-}
-
-void configureButton() {
-  gpio_num_t pin = (gpio_num_t)BUTTON_PIN;
-
-  gpio_set_direction(pin, GPIO_MODE_INPUT);
-  gpio_set_pull_mode(pin, GPIO_PULLUP_ONLY);
-  gpio_set_intr_type(pin, GPIO_INTR_NEGEDGE);
-
-  gpio_install_isr_service(0);
-  gpio_isr_handler_add(pin, onButtonPress, NULL);
-  gpio_intr_enable(pin);
 }
 
 void setup() {
@@ -82,18 +76,25 @@ void setup() {
   lcd.backlight();
   lcd.clear();
 
-  configureTimer();
-  configureButton();
+  // Button: configured entirely through the Arduino interrupt API.
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+  attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), onButtonPress, FALLING);
+
+  // Counter: configured entirely through the Arduino/ESP32 timer
+  // interrupt API. timerBegin() starts the hardware timer at the given
+  // tick frequency; timerAttachInterrupt() binds the ISR (edge/level
+  // parameter removed in current core, timing comes from the alarm
+  // config below); timerAlarm() sets the interval and enables
+  // autoreload so the ISR fires every second indefinitely.
+  counterTimer = timerBegin(TIMER_FREQUENCY_HZ);
+  timerAttachInterrupt(counterTimer, &onTimerInterrupt);
+  timerAlarm(counterTimer, TIMER_ALARM_TICKS, true, 0);
 }
 
 void loop() {
-  static uint32_t lastIncrementTime = 0;
   static uint32_t lastDisplayedCounter = 0xFFFFFFFF;
   static bool wasButtonPressed = false;
   static uint32_t buttonMessageStartMillis = 0;
-
-  *((volatile uint32_t *) TIMG_T0UPDATE_REG(0)) = 1;
-  uint32_t currentTime = *((volatile uint32_t *) TIMG_T0LO_REG(0));
 
   if (buttonPressed) {
     if (!wasButtonPressed) {
@@ -106,14 +107,9 @@ void loop() {
       buttonPressed = false;
       wasButtonPressed = false;
       lastDisplayedCounter = 0xFFFFFFFF;
-      lastIncrementTime = currentTime;
     }
-  } else {
-    if ((currentTime - lastIncrementTime) >= ONE_SECOND_IN_TICKS) {
-      counter++;
-      Serial.printf("counter = %lu\n", counter);
-      lastIncrementTime = currentTime;
-    }
+  } else if (counterUpdated) {
+    counterUpdated = false;
 
     if (counter != lastDisplayedCounter) {
       char buffer[17];
