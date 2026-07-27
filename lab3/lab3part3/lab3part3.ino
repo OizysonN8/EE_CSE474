@@ -61,56 +61,29 @@ void IRAM_ATTR onButtonPress() {
 void setup() {
   Serial.begin(115200);
 
-  // Must be called explicitly with our custom pins BEFORE lcd.init(),
-  // since lcd.init() calls Wire.begin() internally with no arguments,
-  // which would otherwise default to GPIO21 and collide with
-  // BUTTON_PIN.
+  // Overwrites default GPIO pin assignment in lcd.init()
   Wire.begin(SDA_PIN, SCL_PIN);
 
   lcd.init();
   lcd.backlight();
   lcd.clear();
 
-  // Button: configured entirely through the Arduino interrupt API.
-  // INPUT_PULLUP means the pin reads HIGH when idle and LOW when
-  // pressed (assuming a normally-open button wired to ground), which
-  // is why we trigger on FALLING.
   pinMode(BUTTON_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(BUTTON_PIN), onButtonPress, FALLING);
 
-  // Counter: configured entirely through the Arduino/ESP32 timer
-  // interrupt API.
-  //   timerBegin()            - starts the hardware timer at the given
-  //                              tick frequency (1MHz here).
-  //   timerAttachInterrupt()  - binds onTimerInterrupt() as the ISR.
-  //                              The old edge/level parameter is gone
-  //                              in the current core; timing is instead
-  //                              driven entirely by the alarm config
-  //                              set below.
-  //   timerAlarm()            - sets the alarm value (interval, in
-  //                              ticks), enables autoreload (true) so
-  //                              it fires repeatedly forever, and sets
-  //                              the reload count (0 = default/once
-  //                              per alarm period).
   counterTimer = timerBegin(TIMER_FREQUENCY_HZ);
   timerAttachInterrupt(counterTimer, &onTimerInterrupt);
   timerAlarm(counterTimer, TIMER_ALARM_TICKS, true, 0);
 }
 
 void loop() {
-  // lastDisplayedCounter starts at an impossible sentinel value so the
-  // very first counter value (0) is guaranteed to trigger an initial
-  // LCD write.
   static uint32_t lastDisplayedCounter = 0xFFFFFFFF;
   static bool wasButtonPressed = false;
   static uint32_t buttonMessageStartMillis = 0;
 
   if (buttonPressed) {
     // On first detecting the press (not yet displayed), show the
-    // message and start the 2-second hold timer. Note: the counter
-    // ISR keeps incrementing counter in the background during this
-    // window - only the LCD redraw is suppressed, so the displayed
-    // count picks back up from the current value once the hold ends.
+    // message and start the 2-second hold timer.
     if (!wasButtonPressed) {
       lcdPrint("Button Pressed");
       buttonMessageStartMillis = millis();
