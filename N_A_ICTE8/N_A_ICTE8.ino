@@ -1,7 +1,10 @@
 /**
  * @file N_A_ICTE8.ino
  * @author Nathaniel Wagner and Armina Moghadasi
- * @brief 
+ * @brief A traffic light controller that illuminates three LEDs external to an
+ *        ESP32S3 in sequential order, each for 3 seconds at a time.
+ * @details This program uses FreeRTOS and a simple FSM to execute the tasks in
+ *          a non-blocking, priority driven manner.
  * @date 2026-08-05
  */
 
@@ -16,7 +19,9 @@
 #define YELLOW_LED 5
 #define GREEN_LED 4
 
+// The amount of stack space to give each task (in words)
 #define STACK_ALLOC_TO_EACH_TASK 2048
+#define QUEUE_SIZE 2
 
 // ==============================================
 // Queue Handle
@@ -33,14 +38,17 @@ enum State {RED, GREEN, YELLOW};
 // ==============================================
 // Traffic Controller Task
 // ==============================================
-// Sequence: RED → GREEN → YELLOW → RED → ...
-// Use vTaskDelay(pdMS_TO_TICKS(3000)) between state changes
-
+/**
+ * @brief FSM that changes between states RED, YELLOW, AND GREEN sequentially.
+ * 
+ * @param pvParameters Unused parameter port.
+ */
 void Task_TrafficController(void *pvParameters) {
     while(1) {
         State red = RED;
         State yellow = YELLOW;
         State green = GREEN;
+        // xQueueSend needs a pointer argument for the element to add.
         xQueueSend(state_queue, &red, portMAX_DELAY);
         vTaskDelay(pdMS_TO_TICKS(3000));
         xQueueSend(state_queue, &green, portMAX_DELAY);
@@ -54,8 +62,11 @@ void Task_TrafficController(void *pvParameters) {
 // ==============================================
 // Traffic Light Task
 // ==============================================
-// Turn OFF all LEDs first, then turn ON only the LED for that state.
-// Print the current state to Serial (e.g., "Traffic Light: GREEN (Go)")
+/**
+ * @brief Illuminates the correct LED based on the state of the FSM.
+ * 
+ * @param pvParameters Unused parameter port.
+ */
 void Task_TrafficLight(void *pvParameters) {
     State curr_state;
     while (1) {
@@ -85,20 +96,17 @@ void Task_TrafficLight(void *pvParameters) {
 void setup() {
     Serial.begin(115200);
 
-    // TODO: Set all LED pins as OUTPUT
     pinMode(RED_LED, OUTPUT);
     pinMode(GREEN_LED, OUTPUT);
     pinMode(YELLOW_LED, OUTPUT);
 
-    // TODO: Create the queue using xQueueCreate
-    // Hint: Queue length can be 2, item size = sizeof(enum)
-    state_queue = xQueueCreate(2, sizeof(enum State));
+    state_queue = xQueueCreate(QUEUE_SIZE, sizeof(enum State));
     if (state_queue == NULL) {
         Serial.println("Error: Queue not created!");
         while (1); // Halt if queue creation fails
     }
 
-    // Give both tasks the same priority for now
+    // Give both tasks the same priority
     xTaskCreate(Task_TrafficController, "Controller", STACK_ALLOC_TO_EACH_TASK, NULL, 2, NULL);
     xTaskCreate(Task_TrafficLight, "Lights",  STACK_ALLOC_TO_EACH_TASK, NULL, 1, NULL);
 
