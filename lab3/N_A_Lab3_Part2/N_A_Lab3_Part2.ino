@@ -45,8 +45,8 @@ typedef struct TCB {
   void (*taskFunction)(TCB* me); //pointer to function
   uint8_t priority; //priority level (1-4)
   TaskState state;
-  unsigned long interval; //timing interval in milliseconds
-  unsigned long lastRun; //time  of last execution
+  unsigned long interval; //timing interval in milliseconds (used as intra-task pacing delay)
+  unsigned long lastRun; //time of last execution (kept for bookkeeping / display)
   uint16_t step; //step counter for task progress
   //led blinker toggles on and off 8 times, meaning 16 toggles/steps total for one cycle
   //alphabet printer means 26 steps for one cycle
@@ -74,7 +74,7 @@ const uint8_t  voltages[10] = {25,  50,  75, 100, 125, 150, 175, 200, 225, 255};
 
 //task Led Blinker
 void task0(TCB* me) {
-  if(me->step < 16) {
+  if (me->step < 16) {
     bool ledState = (me->step % 2 == 0); //on if step is even, off if step is odd
     digitalWrite(LED_BLINK_PIN, ledState ? HIGH : LOW); //if ledState true output is HIGH
     me->step++;
@@ -83,23 +83,17 @@ void task0(TCB* me) {
     Serial.println("LED Blinker: " + String(me->priority));
     me->state = completed;
   }
-
 }
 
 //task Counter
 void task1(TCB* me) {
-  if(me->step < 10) {
+  if (me->step < 10) {
     me->step++;
 
-    lcd.setCursor(0,1);
+    lcd.setCursor(0, 1);
     lcd.print("Count: ");
     lcd.print(me->step);
     lcd.print(" ");
-
-    /*
-    Serial.print("[Task 3] LCD Count: ");
-    Serial.println(me->step);
-    */
   } else {
     Serial.println("Counter: " + String(me->priority));
     me->state = completed;
@@ -108,21 +102,13 @@ void task1(TCB* me) {
 
 //task music player
 void task2(TCB* me) {
-  if(me->step < 10) {
+  if (me->step < 10) {
     uint8_t idx = me->step;
-    ledcAttach(BUZZER_PIN, melody[idx], LEDC_RESOLUTION); //configure buzzer PWN
-    ledcWrite(BUZZER_PIN, 128); //play note at 50% cycle duty
-    ledcWrite(LED_MUSIC_PIN, voltages[idx]); //output voltage brightness to LED 
+    ledcAttach(BUZZER_PIN, melody[idx], LEDC_RESOLUTION); //configure buzzer PWM
+    ledcWrite(BUZZER_PIN, 128); //play note at 50% duty cycle
+    ledcWrite(LED_MUSIC_PIN, voltages[idx]); //output voltage brightness to LED
 
-    /*
-    Serial.print("[Task 2] Playing Note ");
-    Serial.print(idx + 1);
-    Serial.print("/10 (Freq: ");
-    Serial.print(melody[idx]);
-    Serial.println(" Hz)");
-    */
     me->step++;
-
   } else {
     ledcWrite(BUZZER_PIN, 0);
     ledcWrite(LED_MUSIC_PIN, 0);
@@ -133,108 +119,114 @@ void task2(TCB* me) {
 
 //task alphabet
 void task3(TCB* me) {
-  if(me->step < 26) {
+  if (me->step < 26) {
     char letter = 'A' + me->step;
     Serial.println(letter);
-    Serial.print(" ");
     me->step++;
   } else {
-    Serial.println("Alphabet Print: " + String(me->priority));
+    Serial.println("Alphabet Printer: " + String(me->priority));
     me->state = completed;
-  
   }
 }
 
 
-//order tasks by priority using bubble sort
+//order tasks by priority using bubble sort (ascending: index 0 = highest priority)
 void sortTasksByPriority() {
-  for(int i = 0; i < NUM_TASKS - 1; i++) { //0->3
-    for(int j = 0; j < NUM_TASKS - i - 1; j++) { 
+  for (int i = 0; i < NUM_TASKS - 1; i++) {
+    for (int j = 0; j < NUM_TASKS - i - 1; j++) {
       if (tasks[j].priority > tasks[j + 1].priority) {
-                TCB temp = tasks[j];
-                tasks[j] = tasks[j + 1];
-                tasks[j + 1] = temp;
+        TCB temp = tasks[j];
+        tasks[j] = tasks[j + 1];
+        tasks[j + 1] = temp;
       }
     }
   }
 }
 
 bool areAllTasksCompleted() {
-    for (int i = 0; i < NUM_TASKS; i++) {
-        if (tasks[i].state != completed) return false;
-    }
-    return true;
+  for (int i = 0; i < NUM_TASKS; i++) {
+    if (tasks[i].state != completed) return false;
+  }
+  return true;
 }
 
 void printTaskPriorities() {
-    Serial.println("     CURRENT TASK PRIORITIES      ");
-    for (int i = 0; i < NUM_TASKS; i++) {
-        Serial.print("Priority ");
-        Serial.print(tasks[i].priority);
-        Serial.print(" -> ");
-        Serial.println(tasks[i].name);
+  Serial.println("     CURRENT TASK PRIORITIES      ");
+  for (int i = 0; i < NUM_TASKS; i++) {
+    Serial.print("Priority ");
+    Serial.print(tasks[i].priority);
+    Serial.print(" -> ");
+    Serial.println(tasks[i].name);
+  }
+}
+
+// ---- KEY CHANGE FOR NON-PREEMPTIVE BEHAVIOR ----
+// Runs a single task's function repeatedly, without returning control to the
+// scheduler loop, until that task reports itself completed. No other task's
+// timer or priority can interrupt it once it has started.
+void runTaskToCompletion(TCB* t) {
+  t->state = running;
+  while (t->state != completed) {
+    t->taskFunction(t);
+    if (t->state != completed) {
+      delay(t->interval); // paces steps WITHIN the task; does not gate between tasks
     }
+  }
+  t->lastRun = millis();
 }
 
 void setup() {
   Serial.begin(115200);
 
-    pinMode(LED_BLINK_PIN, OUTPUT);
+  Wire.begin(17, 18);
 
-    // Initialize LEDC channels
-    ledcAttach(BUZZER_PIN, 2000, LEDC_RESOLUTION);
-    ledcAttach(LED_MUSIC_PIN, 5000, LEDC_RESOLUTION);
+  pinMode(LED_BLINK_PIN, OUTPUT);
 
-    lcd.init();
-    lcd.backlight();
-    lcd.setCursor(0, 0);
-    lcd.print("Scheduler Active");
+  // Initialize LEDC channels
+  ledcAttach(BUZZER_PIN, 2000, LEDC_RESOLUTION);
+  ledcAttach(LED_MUSIC_PIN, 5000, LEDC_RESOLUTION);
 
-    sortTasksByPriority();
+  lcd.init();
+  lcd.backlight();
+  lcd.setCursor(0, 0);
+  lcd.print("Scheduler Active");
 
-    // Align lastRun timestamps with setup time so tasks don't all trigger at once
-    unsigned long startMillis = millis();
-    for (int i = 0; i < NUM_TASKS; i++) {
-        tasks[i].lastRun = startMillis;
-    }
+  sortTasksByPriority();
 
-    printTaskPriorities();
+  unsigned long startMillis = millis();
+  for (int i = 0; i < NUM_TASKS; i++) {
+    tasks[i].lastRun = startMillis;
+  }
+
+  printTaskPriorities();
 }
 
 void loop() {
-  unsigned long curr_mills= millis();
-
-  for(int i = 0; i < NUM_TASKS; i++) {
-    if(tasks[i].state != completed) {
-      if (curr_mills - tasks[i].lastRun >= tasks[i].interval) {
-        tasks[i].state = running;
-        tasks[i].lastRun = curr_mills;
-        tasks[i].taskFunction(&tasks[i]);
-
-        if (tasks[i].state != completed) {
-          tasks[i].state = waiting;
-        }
-        break;
-      }
+  // Non-preemptive: walk the priority-sorted array in order, and run each
+  // incomplete task fully to completion before even looking at the next one.
+  for (int i = 0; i < NUM_TASKS; i++) {
+    if (tasks[i].state != completed) {
+      runTaskToCompletion(&tasks[i]);
     }
   }
+
   if (areAllTasksCompleted()) {
-        Serial.println("All tasks completed");
+    Serial.println("All tasks completed");
 
-        delay(4000); // 4 second pause so you can observe the finished state
+    delay(4000); // 4 second pause so you can observe the finished state
 
-        for (int i = 0; i < NUM_TASKS; i++) {
-            tasks[i].priority = (tasks[i].priority % 4) + 1;
-            tasks[i].step = 0;
-            tasks[i].state = ready;
-            tasks[i].lastRun = millis();
-        }
-
-        sortTasksByPriority();
-
-        lcd.clear();
-        lcd.setCursor(0, 0);
-
-        printTaskPriorities();
+    for (int i = 0; i < NUM_TASKS; i++) {
+      tasks[i].priority = (tasks[i].priority % 4) + 1;
+      tasks[i].step = 0;
+      tasks[i].state = ready;
+      tasks[i].lastRun = millis();
     }
+
+    sortTasksByPriority();
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+
+    printTaskPriorities();
+  }
 }
