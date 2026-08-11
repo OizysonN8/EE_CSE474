@@ -1,14 +1,16 @@
-//Filename: Lab4_part2
-//Authors: Armina Moghadasi and Nate Wagner
-//Date: 08/10/2026
-//Description: This file implements a dual-core light sensor and anomaly 
-//detection system using FreeRTOS. It pins two tasks to core 0, the light
-//detecter (which reads from a photoresister and calculates the SMA which is
-//the average of the last 5 readings) and the Light Level Display which the 
-//light level data and SMA data to be displayed on the LCD. The next two tasks
-//are pined to core 1, which includes the Anomaly Alarm which toggles the LED
-//when the environment is too dark or too bright and the Prime Calculation task
-//that repeatedly calculates all the prime numbers from 2 to 5000. 
+/**
+* @file Lab4_part2
+* @author Armina Moghadasi and Nate Wagner
+* @date 08/10/2026
+* @brief This file implements a dual-core light sensor and anomaly 
+* detection system using FreeRTOS. It pins two tasks to core 0, the light
+* detecter (which reads from a photoresister and calculates the SMA which is
+* the average of the last 5 readings) and the Light Level Display which the 
+* light level data and SMA data to be displayed on the LCD. The next two tasks
+* are pined to core 1, which includes the Anomaly Alarm which toggles the LED
+* when the environment is too dark or too bright and the Prime Calculation task
+* that repeatedly calculates all the prime numbers from 2 to 5000. 
+*/
 
 /*
 Info for me:
@@ -51,13 +53,11 @@ SemaphoreHandle_t xLightSemaphore;
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 bool isPrime(int n);
 
-
-//          1. Initialize Variables
-//          2. Loop Continuously
-//           - Read light level from the photoresistor.
-//           - Take semaphore
-//           - Calculate the simple moving average and update variables.
-//           - Give semaphore to signal data is ready.
+/**
+* @brief: Initialize Variables, Loop Continuously: Read light level 
+* from the photoresistor Take semaphore, Calculate the simple moving 
+* average and update variables. Give semaphore to signal data is ready.
+*/
 void LightDetectorTask(void *pvParameters) {
   const int size = 5;
   int rawHistory[size] = {0}; //circular buffer array
@@ -80,11 +80,10 @@ void LightDetectorTask(void *pvParameters) {
 }
 
 
-//          1. Initialize Variables
-//           2. Loop Continuously
-//            - Wait for semaphore.
-//            - If data has changed, update the LCD with the new light level and SMA.
-//            - Give back the semaphore.
+/**
+* @brief Initialize Variables. Loop Continuously: Wait for semaphore, If data has changed, 
+* update the LCD with the new light level and SMA. Give back the semaphore.
+*/
 void LCDTask(void *pvParameters) {
   int lastRawVal =-999;
   float lastSMAVal = -999.0;
@@ -114,11 +113,11 @@ void LCDTask(void *pvParameters) {
   }
 }
 
-//            1. Loop Continuously
-//             - Wait for semaphore.
-//             - Check if SMA indicates a light anomaly (outside thresholds).
-//             - If an anomaly is detected, flash a LED signal.
-//             - Give back the semaphore.
+/**
+* @brief Loop Continuously Wait for semaphore, Check if SMA indicates a light 
+* anomaly (outside thresholds), If an anomaly is detected, flash a LED signal.
+* Give back the semaphore.
+*/
 void AnomalyAlarmTask(void *pvParameters) {
   const float HIGH_THRESHOLD = 3800.0;
   const float LOW_THRESHOLD = 2500.0;
@@ -138,9 +137,10 @@ void AnomalyAlarmTask(void *pvParameters) {
   }
 }
 
-//            1. Loop from 2 to 5000
-//             - Check if the current number is prime.
-//             - If prime, print the number to the serial monitor.
+/**
+* @brief Loop from 2 to 5000, Check if the current number is prime, 
+* If prime, print the number to the serial monitor.
+*/
 void PrimeCalculationTask(void *pvParameters) {
   for(;;) {
     for (int i = 2; i <= 5000; i++) {

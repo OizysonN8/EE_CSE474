@@ -1,11 +1,12 @@
-/* Filename: Lab4_Part1
-Author: Armina Moghadasi and Nathaniel Wagner
-Date: 08/10/2026
-Description: This implements a algorithm that preempts tasks based on the 
-shortest remaining time. The three tasks include LED Blinker, LCD counter, and 
-alphabet printer. Based on which task has the shortest remaining execution time,
-the scheduler preempts any current task that is not that task and then resumes 
-the next task with the shortest exectution time until all tasks are complete. 
+/**
+* @file lab4_part1.ino
+* @author Armina Moghadasi and Nathaniel Wagner
+* @date 08/10/2026
+* @brief This implements a algorithm that preempts tasks based on the 
+* shortest remaining time. The three tasks include LED Blinker, LCD counter, and 
+* alphabet printer. Based on which task has the shortest remaining execution time,
+* the scheduler preempts any current task that is not that task and then resumes 
+* the next task with the shortest exectution time until all tasks are complete. 
 */
 
 /* 
@@ -29,32 +30,31 @@ lcd.backlight() // turns on the LCD background LED light
 #define LEDC_RESOLUTION 8 
 #define NUM_TASKS 3
 
-
-//task handles
 TaskHandle_t LEDTaskHandle = NULL;
 TaskHandle_t CounterTaskHandle = NULL;
 TaskHandle_t AlphabetTaskHandle = NULL;
 
-// Total times for tasks
-//portTick_PERIOD_MS is a constant macro that reperesents how many miliseconds elaspe during a 
-//a single RTOS tick 
+/// Total times for tasks
+///portTick_PERIOD_MS is a constant macro that reperesents how many miliseconds elaspe during a 
+///a single RTOS tick 
 const TickType_t ledTaskExecutionTime = 500 / portTICK_PERIOD_MS;      // 500 ms
 const TickType_t counterTaskExecutionTime = 2000 / portTICK_PERIOD_MS; // 2 seconds
 const TickType_t alphabetTaskExecutionTime = 13000 / portTICK_PERIOD_MS; // 13 seconds
 
-// Remaining Execution Times
+/// Remaining Execution Times
 volatile TickType_t remainingLedTime = ledTaskExecutionTime;
 volatile TickType_t remainingCounterTime = counterTaskExecutionTime;
 volatile TickType_t remainingAlphabetTime = alphabetTaskExecutionTime;
 
-//construct LiquidCrystal and name it lcd
+///construct LiquidCrystal and name it lcd
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-//Task functions
+///Task functions
 
-//task Led Blinker: toggles the LED based on the amount of time left on the 
-//execution time of the task. It accounts for the delay by subtracting it from
-//remaining execution time. 
+
+/// @brief task Led Blinker: toggles the LED based on the amount of time left on the execution time of the task. It accounts for the delay by subtracting it from remaining execution time.
+/// @param pvParameters FreeRTOS task parameters.
+
 void task0(void *pvParameters) {
   Serial.println("LED started");
   const TickType_t stepDelay = pdMS_TO_TICKS(100);
@@ -79,9 +79,8 @@ void task0(void *pvParameters) {
   }
 }
 
-//task Counter: Prints from 1 to 20 on the LCD based on 
-//the amount of time left on the execution time of the task. 
-//It accounts for the delay by subtracting it from remaining execution time. 
+/// @brief task Counter: Prints from 1 to 20 on the LCD based on the amount of time left on the execution time of the task. It accounts for the delay by subtracting it from remaining execution time. 
+/// @param pvParameters FreeRTOS task parameters.
 void task1(void *pvParameters) {
   Serial.println("LCD started");
   const TickType_t stepDelay = pdMS_TO_TICKS(100);
@@ -109,8 +108,8 @@ void task1(void *pvParameters) {
   }
 }
 
-//task alphabet: prints the alphabet from A to Z based on
-//execution time and accounts for delays similarly to the other tasks.
+///@brief task alphabet: prints the alphabet from A to Z based on execution time and accounts for delays similarly to the other tasks.
+///@param pvParameters FreeRTOS task parameters.
 void task2(void *pvParameters) {
     Serial.println("alphabet started");
     const TickType_t stepDelay = pdMS_TO_TICKS(500);
@@ -140,34 +139,32 @@ void task2(void *pvParameters) {
   }
 }
 
-///SRFT scheduler task has the highest prioirty and runs continuously 
-//to manage three worker tasks (LED, Counter, Alphabet).
-//it tracks the shortest task and the minTime, comparing each task's remaining
-//execution with minTime and setting it to shortestTask if it is smaller.
-//It suspends tasks if they are not the shortestTask and resumes the execution
-//time of the shortestTask.
- * It evaluates which task has the smallest remaining execution time, suspends all other tasks,
- * and resumes the task with the shortest remaining time.
- */
+/**
+* @brief SRFT scheduler task has the highest prioirty and runs continuously 
+* to manage three worker tasks (LED, Counter, Alphabet).
+* it tracks the shortest task and the minTime, comparing each task's remaining
+* execution with minTime and setting it to shortestTask if it is smaller.
+* It suspends tasks if they are not the shortestTask and resumes the execution
+* time of the shortestTask.
+* It evaluates which task has the smallest remaining execution time, suspends all other tasks,
+* and resumes the task with the shortest remaining time.
+*/
+/// @param pvParameters FreeRTOS task parameters.
 void srtfSchedulerTask(void *pvParameters) {
   TickType_t checkPeriod = 50 / portTICK_PERIOD_MS;
   int timeElapsed = 0;
   
   for(;;) {
-    // Inside srtfSchedulerTask:
     timeElapsed += 50;
-    
-    // Reset LED time at 5 seconds (5000 ms) while Alphabet Task is printing
+    ///test preemption
     if (timeElapsed == 5000) {
       Serial.println("\n>>> PREEMPTION TRIGGERED: LED Task inserted! <<<");
       remainingLedTime = pdMS_TO_TICKS(400); // 400 ms blink
     }
 
-    //initalizing minTime and the shortest task
     TickType_t minTime = portMAX_DELAY;
     TaskHandle_t shortestTask = NULL;
 
-    //updating shortest task and minTime based on completion or when less than minTime
     if(remainingLedTime > 0 && remainingLedTime < minTime) {
       minTime = remainingLedTime;
       shortestTask = LEDTaskHandle;
@@ -181,7 +178,6 @@ void srtfSchedulerTask(void *pvParameters) {
       shortestTask = AlphabetTaskHandle;
     }
 
-    //preemptive scheduling
     if(shortestTask != NULL) {
       if(shortestTask != LEDTaskHandle && LEDTaskHandle != NULL) {
         vTaskSuspend(LEDTaskHandle);
