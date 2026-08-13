@@ -9,21 +9,6 @@
 * the next task with the shortest exectution time until all tasks are complete. 
 */
 
-/* 
-info for me
-The LiquidCrystal_I2C saves the 6-8 pins needed to wire a LCD directly to a microcontroller. Contains
-commands that convert I2C bus commands into parallel signals that the LCD needs. 
-
-constructor:
-LiquidCrystal_I2C(address, cols, rows)
-
-functions include:
-lcd.init() //initalizes the I2C communication system
-led.setCursor(col, row) //positions the text cursor at specific location
-lcd.print("...") //writes character at current cursor location
-lcd.backlight() // turns on the LCD background LED light
-*/
-
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
 #define LED_BLINK_PIN 4
@@ -148,8 +133,9 @@ void task2(void *pvParameters) {
 * time of the shortestTask.
 * It evaluates which task has the smallest remaining execution time, suspends all other tasks,
 * and resumes the task with the shortest remaining time.
+*
+* @param pvParameters FreeRTOS task parameters.
 */
-/// @param pvParameters FreeRTOS task parameters.
 void srtfSchedulerTask(void *pvParameters) {
   TickType_t checkPeriod = 50 / portTICK_PERIOD_MS;
   int timeElapsed = 0;

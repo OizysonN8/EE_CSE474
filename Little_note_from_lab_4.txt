@@ -1,0 +1,42 @@
+/*
+Info for me:
+binary semaphore: acts like a flag. Two staes: available (1) or 
+not available (0)
+  xSemaphoreGive(semaphoreHandle) : rasies the flag to signal data is ready
+  xSemaphoreTake(semaphoreHandle, timeout): waits for the flag. if availble,
+  takes the semaphore or the timeout expires
+
+  SemaphoreHandle_t xLightSemaphore : synchronizes data updates across tasks
+
+variables
+  volatile int rawLightValue = 0 -> latest raw value from photoresistor
+  volatile float currentSMA = 0.0 -> calculated simple moving average??
+  volatile bool newAnomalyDetectd = false -> flag to notify alaram task
+
+  int rawHistory[5] = {0} -> array to store the last 5 readings
+  int historyIndex = 0 -> pointer to keep track of the circular buffer position
+
+setup:
+  xSemaphoreCreateBinary()
+  xSemaphoreGive()
+  xSemaphoreTake()
+  xTaskCreatePinnedToCore
+
+  digitalWrite(pin, HIGH/LOW)
+  vTaskDelay(ms / portTICK_PERIOD_MS)
+*/
+
+/* 
+info for me
+The LiquidCrystal_I2C saves the 6-8 pins needed to wire a LCD directly to a microcontroller. Contains
+commands that convert I2C bus commands into parallel signals that the LCD needs. 
+
+constructor:
+LiquidCrystal_I2C(address, cols, rows)
+
+functions include:
+lcd.init() //initalizes the I2C communication system
+led.setCursor(col, row) //positions the text cursor at specific location
+lcd.print("...") //writes character at current cursor location
+lcd.backlight() // turns on the LCD background LED light
+*/

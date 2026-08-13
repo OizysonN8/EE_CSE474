@@ -1,5 +1,5 @@
 /**
-* @file Lab4_part2
+* @file lab4_part2.ino
 * @author Armina Moghadasi and Nate Wagner
 * @date 08/10/2026
 * @brief This file implements a dual-core light sensor and anomaly 
@@ -10,34 +10,6 @@
 * are pined to core 1, which includes the Anomaly Alarm which toggles the LED
 * when the environment is too dark or too bright and the Prime Calculation task
 * that repeatedly calculates all the prime numbers from 2 to 5000. 
-*/
-
-/*
-Info for me:
-binary semaphore: acts like a flag. Two staes: available (1) or 
-not available (0)
-  xSemaphoreGive(semaphoreHandle) : rasies the flag to signal data is ready
-  xSemaphoreTake(semaphoreHandle, timeout): waits for the flag. if availble,
-  takes the semaphore or the timeout expires
-
-  SemaphoreHandle_t xLightSemaphore : synchronizes data updates across tasks
-
-variables
-  volatile int rawLightValue = 0 -> latest raw value from photoresistor
-  volatile float currentSMA = 0.0 -> calculated simple moving average??
-  volatile bool newAnomalyDetectd = false -> flag to notify alaram task
-
-  int rawHistory[5] = {0} -> array to store the last 5 readings
-  int historyIndex = 0 -> pointer to keep track of the circular buffer position
-
-setup:
-  xSemaphoreCreateBinary()
-  xSemaphoreGive()
-  xSemaphoreTake()
-  xTaskCreatePinnedToCore
-
-  digitalWrite(pin, HIGH/LOW)
-  vTaskDelay(ms / portTICK_PERIOD_MS)
 */
 
 #include <Arduino.h>

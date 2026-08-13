@@ -1,36 +1,43 @@
-#include "feertos/FreeRTOS.h"
-#include "freetos/task.h" 
+/**
+ * @file N_A_icte7.ino
+ * @author Armina Moghadasi and Nate Wagner
+ * @brief This file blinks two external LEDs connected to an ESP32-S3, one every
+ * 500 ms and the other every 200 ms.
+ *
+ * @details The freertos library is used to create two tasks that are scheduled
+ * by FreeRTOS's round robin in a non-blocking manner.
+ */
+
 #include "driver/gpio.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h" 
 #include "soc/gpio_struct.h"
 
-#define LED1_PIN 5
-#define LED2_PIN 6
-
-BaseType_t xTaskCreate(
-  TaskFunction_t pvTaskCode, // Pointer to the function that implements the task
-  const char * const pcName, // Task name (for debugging)
-  configSTACK_DEPTH_TYPE usStackDepth, // Stack size (in words, NOT bytes)
-  void *pvParameters, // Parameters passed to the task (NULL if not used)
-  UBaseType_t uxPriority, // Task priority (higher number = higher priority)
-  TaskHandle_t *pxCreatedTask // Task handle (NULL if not needed)
-);
+#define LED1_PIN 15
+#define LED2_PIN 16
 
 //Task Paramaters Struct
 typedef struct {
   uint32_t pin;
-  TickType_t toggle_interval_ticks; //TickType holds the RTOS tick count 
+  TickType_t toggle_interval_ticks;  //TickType holds the RTOS tick count 
 } LedTaskParameters_t;
 
 static LedTaskParameters_t task1_params = {
-  .pin = LED1_PIN;
-  .toggle_interval_ticks = pdMS_TO_TICKS(500)
+  .pin = LED1_PIN,
+  .toggle_interval_ticks = pdMS_TO_TICKS(500)  // 500 ms
 };
 
 static LedTaskParameters_t task2_params = {
-  .pin = LED2_PIN;
-  .toggle_interval_ticks = pdMS_TO_TICKS(200);
-}
+  .pin = LED2_PIN,
+  .toggle_interval_ticks = pdMS_TO_TICKS(200)  // 200 ms
+};
 
+/**
+ * @brief Defines a task that blinks an LED with a certain period.
+ * 
+ * @param pvParameters A pointer to the task parameters, which specify the GPIO
+ * pin and period.
+ */
 void Task_BlinkLED(void *pvParameters) {
   LedTaskParameters_t *params = (LedTaskParameters_t*)pvParameters;
   uint32_t pin = params->pin;
@@ -59,17 +66,18 @@ void setup() {
   xTaskCreate(
     Task_BlinkLED,
     "LED1_Task",
-    2048,
+    2048,  // Allocated stack size (words/4 bytes)
     (void *)&task1_params,
-    1,
+    1,  // Priority
     NULL
   );
+
   xTaskCreate(
     Task_BlinkLED,
     "LED2_Task",
-    2048,
+    2048,  // Allocated stack size (words/4 bytes)
     (void *)&task2_params,
-    1,
+    1,  // Priority
     NULL
   );
 }

@@ -1,6 +1,7 @@
 /**
  * @file N_A_ICTE9.ino
- * @author Nathaniel Wagner and Armina Moghadasi
+ * @author Nathaniel Wagner and Arm
+ina Moghadasi
  * @brief Blinks an external LED connected to an ESP32-S3
  * @details This program uses FreeRTOS notifications, with one notify-er task,
  *          and a second notifyee task the toggles the LED.
@@ -15,7 +16,7 @@
 // Pin Definitions
 // ==============================================
 #define LED_PIN 5
-#define STACK_ALLOC_TO_EACH_TASK 2048
+#define STACK_ALLOC_TO_EACH_TASK 4096
 
 // ==============================================
 // Task Handle(s)
@@ -23,6 +24,7 @@
 // TODO: Declare a global TaskHandle_t for the receiving task (BlinkTask)
 // so the sender can notify it.
 TaskHandle_t xBlinkHandler;
+TaskHandle_t xUpdateBlinkRate;
 
 // ==============================================
 // Task A: BlinkTask (Receiver)
@@ -37,8 +39,8 @@ void BlinkTask(void *pvParameters) {
   bool led_on = false;
   while(true) {
     if (ulTaskNotifyTake(pdTRUE, portMAX_DELAY)) {
-        Serial.println("Notification received!");
-        digitalWrite(LED_PIN, ~led_on);
+        led_on = !led_on;
+        digitalWrite(LED_PIN, led_on);
     }
   }
 }
@@ -51,13 +53,32 @@ void BlinkTask(void *pvParameters) {
 //  - Every 1000 ms, call xTaskNotifyGive(<blink task handle>).
 //  - Use vTaskDelay(pdMS_TO_TICKS(1000)) for timing (no delay()).
 void NotifierTask(void *pvParameters) {
+  uint32_t blink_period = 1000;
+
   while (true) {
     xTaskNotifyGive(xBlinkHandler);
-    Serial.println("Notification sent!");
-    vTaskDelay(pdMS_TO_TICKS(1000));
+
+    uint32_t received_value;
+    BaseType_t xResult = xTaskNotifyWait(0x0, 0x0, &received_value, 0);
+    if (xResult == pdTRUE) {
+      blink_period = received_value;
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(blink_period));
   }
 }
 
+
+// ==============================================
+// Task C: ConfigTask
+// ==============================================
+void ConfigRate(void *pvParameters) {
+  while (true) {
+    uint32_t blink_period = random(500, 1500);
+    xTaskNotify(xUpdateBlinkRate, blink_period, eSetValueWithOverwrite);
+    vTaskDelay(pdMS_TO_TICKS(5000));
+  }
+}
 
 
 // ==============================================
@@ -70,7 +91,9 @@ void setup() {
   xTaskCreate(BlinkTask, "BlinkTask", STACK_ALLOC_TO_EACH_TASK, NULL, 1, &xBlinkHandler);
 
   // TODO: Create NotifierTask SECOND.
-  xTaskCreate(NotifierTask, "NotifierTask", STACK_ALLOC_TO_EACH_TASK, NULL, 1, NULL);
+  xTaskCreate(NotifierTask, "NotifierTask", STACK_ALLOC_TO_EACH_TASK, NULL, 1, &xUpdateBlinkRate);
+
+  xTaskCreate(ConfigRate, "ConfigRate", STACK_ALLOC_TO_EACH_TASK, NULL, 1, NULL);
 
   // (Optional) brief print that the demo started.
   Serial.println("Task Notification demo started");
