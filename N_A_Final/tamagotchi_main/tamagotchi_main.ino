@@ -22,7 +22,7 @@
  *
  * TIMERS
  *   Timer #1 (tSlowSensor)  1 s auto-reload  paces DS3231 + DHT11 reads
- *   Timer #2 (tHunger)     30 s auto-reload  posts EVT_HUNGER_EXPIRE
+ *   Timer #2 (tHunger)      2 min auto-reload posts EVT_HUNGER_EXPIRE
  *
  * OWNERSHIP RULE
  *   Only GameTask writes petState. Sensor/input tasks and timer callbacks
@@ -30,15 +30,61 @@
  *   xQueuePeek. No mutex is required on the state itself.
  *
  * SLEEP MODEL (two distinct states)
- *   SLEEPING     -- inactivity >= INACTIVITY_TIMEOUT_MS. CPU stays fully
- *                   awake; this is a behavioral state only. Exits on PIR
- *                   motion or a user input.
- *   HIBERNATING  -- RTC clock enters the night window. Tasks park at safe
- *                   points, timers stop, a DS3231 Alarm 1 is armed, and the
- *                   chip enters ESP32-S3 LIGHT SLEEP. Light sleep preserves
- *                   RAM/CPU/peripheral state, so execution resumes exactly
- *                   where it stopped. Wake is via ext0 on the DS3231 SQW pin
- *                   (open drain, active LOW).
+ *   YAWNING/SLEEPING -- driven purely by idleMs, the time since the last
+ *                   *interrupt*. idleMs must cross INACTIVITY_TIMEOUT_MS -
+ *                   YAWN_LEAD_MS to enter YAWNING, then INACTIVITY_TIMEOUT_MS
+ *                   itself to enter SLEEPING. YAWN_LEAD_MS MUST stay smaller
+ *                   than INACTIVITY_TIMEOUT_MS -- if they are equal (or
+ *                   YAWN_LEAD_MS is larger), the "not yet sleepy" window
+ *                   collapses to zero width and the pet is in YAWNING for
+ *                   its entire idle period instead of just the tail end.
+ *                   An interrupt while YAWNING or SLEEPING immediately
+ *                   snaps lastActivityMs back to now, which forces idleMs
+ *                   to 0 and lets the normal priority chain re-evaluate on
+ *                   the very next cycle -- i.e. the pet "wakes up" into
+ *                   whatever state it would otherwise be in (HAPPY, HOT,
+ *                   COLD, HUNGRY, ...), not forced into any single state.
+ *
+ *   INTERRUPT SOURCES (v4 -- state-gated confirm-before-commit on sonar):
+ *     1. Sonar distance change -- a candidate delta vs. the last CONFIRMED
+ *        anchor reading must exceed DISTANCE_CHANGE_TOLERANCE_CM and then
+ *        persist (stay within tolerance of itself) for at least
+ *        DISTANCE_CONFIRM_MS before it is accepted as a real interrupt.
+ *        All candidate/anchor tracking is confined to
+ *        state == ST_YAWNING || state == ST_SLEEPING, and the anchor is
+ *        reseeded to the current reading the instant the pet enters either
+ *        state, so pre-sleep jitter can never carry over.
+ *     2. Sound activity -- sd.soundLevel >= ACTIVITY_SOUND_THRESHOLD,
+ *        checked only while YAWNING/SLEEPING for the same reason.
+ *
+ *   NOTE: the OVERSTIMULATED latch (sd.soundLevel > SOUND_THRESHOLD) is a
+ *   SEPARATE check that runs every cycle regardless of state -- it is not
+ *   part of the YAWN/SLEEP interrupt system above. It is cleared only by an
+ *   EVT_CALM (IR remote) event.
+ *
+ *   PIR (sd.motion) is INTENTIONALLY EXCLUDED from all interrupt/activity
+ *   logic. It is read and published for telemetry only.
+ *
+ *   HIBERNATING -- MINUTE-RESOLUTION NIGHT WINDOW (v5):
+ *   Previously the night window and wake alarm only worked in whole hours
+ *   (isNightHour(hour) and a DS3231_A1_Hour alarm hardcoded to :00:00),
+ *   which made it impossible to demo hibernation live without waiting for
+ *   an actual hour boundary. Now NIGHT_START_HOUR/MINUTE and
+ *   WAKE_HOUR/MINUTE both specify hour AND minute, isNightTime() compares
+ *   time-of-day in minutes-since-midnight (correctly handling a window that
+ *   crosses midnight), and the RTC alarm uses DS3231_A1_Hour_Minute (which
+ *   matches on hour AND minute, unlike DS3231_A1_Hour which ignores
+ *   minutes) so wake fires at the exact configured minute. For a live demo,
+ *   set NIGHT_START_HOUR/MINUTE a couple minutes in the future and
+ *   WAKE_HOUR/MINUTE a few minutes after that, and consider shrinking
+ *   HIBERNATE_GRACE_MS / POST_WAKE_BLOCK_MS so the demo window isn't padded
+ *   by those grace periods.
+ *
+ *   RTC clock enters the night window -- tasks park at safe points, timers
+ *   stop, DS3231 Alarm 1 is armed, and the chip enters ESP32-S3 LIGHT SLEEP.
+ *   Light sleep preserves RAM/CPU/peripheral state, so execution resumes
+ *   exactly where it stopped. Wake is via ext0 on the DS3231 SQW pin (open
+ *   drain, active LOW).
  *
  *   NOTE: light sleep gates the ESP32's internal peripherals only. Sensors
  *   remain powered from the 3V3 rail by design decision, so hibernation
@@ -88,8 +134,8 @@ static const TickType_t GAME_PERIOD   = pdMS_TO_TICKS(100);   //  10 Hz target
 static const TickType_t REPORT_PERIOD = pdMS_TO_TICKS(1000);  //   1 Hz
 
 /* --- software timers --- */
-static const uint32_t SLOW_SENSOR_PERIOD_MS = 1000;   // Timer #1: RTC each tick
-static const uint32_t HUNGER_PERIOD_MS      = 30000;  // Timer #2
+static const uint32_t SLOW_SENSOR_PERIOD_MS = 1000;    // Timer #1: RTC each tick
+static const uint32_t HUNGER_PERIOD_MS      = 120000;  // Timer #2
 
 /* --- comfort band (pot sets the center, DHT11 supplies the real temp) --- */
 static const float BAND_WIDTH_C = 3.0f;
@@ -99,17 +145,23 @@ static const float CENTER_MIN_C = 15.0f;   // pot fully CCW
 static const float CENTER_MAX_C = 30.0f;   // pot fully CW
 
 /* --- sound thresholds (same sensor, two jobs, so two levels) --- */
-static const int SOUND_THRESHOLD          = 250;  // spike -> OVERSTIMULATED
-static const int ACTIVITY_SOUND_THRESHOLD = 60;   // room noise -> "company"
+static const int SOUND_THRESHOLD          = 160;  // spike -> OVERSTIMULATED
+static const int ACTIVITY_SOUND_THRESHOLD = 80;   // room noise -> YAWN/SLEEP interrupt
+
+/* --- sonar-based YAWNING/SLEEPING interrupt --- */
+static const float    DISTANCE_CHANGE_TOLERANCE_CM = 5.0f;  // > this = candidate
+static const uint32_t DISTANCE_CONFIRM_MS          = 300;   // must persist this long
 
 /* --- inactivity / SLEEPING --- */
-static const uint32_t INACTIVITY_TIMEOUT_MS = 300000UL;  // 5 min -> SLEEPING
-static const uint32_t YAWN_LEAD_MS          = 30000UL;   // YAWNING before that
+static const uint32_t INACTIVITY_TIMEOUT_MS = 30000UL;  // 30 s -> SLEEPING
+static const uint32_t YAWN_LEAD_MS          = 10000UL;   // last 10 s -> YAWNING
 
-/* --- hibernation window (RTC hours, 24 h) --- */
+/* --- hibernation window (RTC hour + minute, v5 minute resolution) --- */
 #define HIBERNATION_ENABLED 1
-static const int      NIGHT_START_HOUR    = 22;      // >= this hour is night
-static const int      WAKE_HOUR           = 7;       // <  this hour is night
+static const int      NIGHT_START_HOUR    = 3;      // hibernation start hour
+static const int      NIGHT_START_MINUTE  = 50;       // hibernation start minute
+static const int      WAKE_HOUR           = 3;       // wake hour
+static const int      WAKE_MINUTE         = 52;       // wake minute
 static const uint32_t HIBERNATE_GRACE_MS  = 15000UL; // no sleep right at boot
 static const uint32_t POST_WAKE_BLOCK_MS  = 60000UL; // no immediate re-entry
 
@@ -150,7 +202,7 @@ typedef struct {
   float humidity;     // %RH, DHT11
   int   soundLevel;   // raw ADC peak-to-peak
   float distance;     // cm, -1 on timeout
-  bool  motion;       // PIR level
+  bool  motion;       // PIR level (NOT used for activity/interrupts, see header)
   int   hour;
   int   minute;
   int   second;
@@ -185,6 +237,7 @@ typedef struct {
   bool     overstim;
   bool     hot;
   bool     cold;
+  bool     wokeByInterrupt;   // true on the cycle a YAWN/SLEEP interrupt fired
   uint32_t msSinceActivity;
 } StateSnapshot;
 
@@ -283,8 +336,18 @@ static float readDistance() {
   return duration / 58.0f;
 }
 
-static bool isNightHour(int hour) {
-  return (hour >= NIGHT_START_HOUR) || (hour < WAKE_HOUR);
+/* v5: minute-resolution night-window check. Compares time-of-day as
+   minutes-since-midnight so the window is no longer forced to whole-hour
+   boundaries, and correctly handles a window that crosses midnight
+   (e.g. 22:00 -> 01:00). */
+static bool isNightTime(int hour, int minute) {
+  int nowMin   = hour * 60 + minute;
+  int startMin = NIGHT_START_HOUR * 60 + NIGHT_START_MINUTE;
+  int wakeMin  = WAKE_HOUR * 60 + WAKE_MINUTE;
+  if (startMin <= wakeMin) {
+    return (nowMin >= startMin) && (nowMin < wakeMin);
+  }
+  return (nowMin >= startMin) || (nowMin < wakeMin);   // window crosses midnight
 }
 
 /* Park handshake, called at the top of every non-GameTask loop. Returns true
@@ -378,7 +441,10 @@ static void SensorTask(void *) {
     data.soundLevel = g_soundLevel;
 
     /* PIR. HC-SR501 holds its output HIGH for its retrigger window (seconds),
-       so sampling the level here is sufficient -- no edge latch needed. */
+       so sampling the level here is sufficient -- no edge latch needed.
+       NOTE: data.motion is still published for visibility/telemetry, but is
+       intentionally NOT consulted by GameTask's activity/interrupt logic
+       (see header comment). */
     data.motion = (digitalRead(PIN_PIR) == HIGH);
 
     /* DS3231 -- paced by Timer #1. */
@@ -460,8 +526,11 @@ static void InputTask(void *) {
 
 
 /* ============================== Hibernation ============================= */
-/* Arms DS3231 Alarm 1 for WAKE_HOUR:00:00 and enters ESP32-S3 light sleep.
-   Called from GameTask only. Returns after the chip has woken. */
+/* Arms DS3231 Alarm 1 for WAKE_HOUR:WAKE_MINUTE:00 and enters ESP32-S3 light
+   sleep. Called from GameTask only. Returns after the chip has woken.
+   v5: uses DS3231_A1_Hour_Minute (matches hour AND minute) instead of
+   DS3231_A1_Hour (matches hour only, ignores minutes), and the target
+   DateTime now carries the real WAKE_MINUTE instead of a hardcoded 0. */
 static void enterHibernation() {
   Serial.println("[HIB] entering hibernation");
   Serial.flush();
@@ -488,9 +557,9 @@ static void enterHibernation() {
   rtc.disableAlarm(2);
 
   DateTime now  = rtc.now();
-  DateTime wake(now.year(), now.month(), now.day(), WAKE_HOUR, 0, 0);
+  DateTime wake(now.year(), now.month(), now.day(), WAKE_HOUR, WAKE_MINUTE, 0);
   if (wake <= now) {
-    wake = wake + TimeSpan(1, 0, 0, 0);   // WAKE_HOUR already passed today
+    wake = wake + TimeSpan(1, 0, 0, 0);   // wake time already passed today
   }
   if (!rtc.setAlarm1(wake, DS3231_A1_Hour)) {
     Serial.println("[HIB] alarm arm FAILED, staying awake");
@@ -500,8 +569,8 @@ static void enterHibernation() {
     return;
   }
 
-  Serial.printf("[HIB] now %02d:%02d, alarm %02d:00, light sleep now\n",
-                now.hour(), now.minute(), wake.hour());
+  Serial.printf("[HIB] now %02d:%02d, alarm %02d:%02d, light sleep now\n",
+                now.hour(), now.minute(), wake.hour(), wake.minute());
   Serial.flush();
 
   /* 4. ext0 wake on SQW. Open drain, active LOW, so wake on level 0. */
@@ -536,7 +605,14 @@ static void enterHibernation() {
    snapshot from Queue #1, then recomputes a single PetState by priority:
    HIBERNATING > SLEEPING > YAWNING > OVERSTIMULATED > HOT/COLD > HUNGRY >
    HAPPY. Latching conditions (hunger, overstimulation) are held in local
-   flags: they are inputs to the state computation, not a second state. */
+   flags: they are inputs to the state computation, not a second state.
+
+   YAWNING/SLEEPING model (v4, state-gated interrupt tracking):
+     idleMs only resets in two cases:
+       (a) a CONFIRMED interrupt fires WHILE state is YAWNING or SLEEPING.
+       (b) EVT_FEED / EVT_CALM (explicit user action) at any time.
+     See file header for the v4 sonar interrupt design and the v5
+     minute-resolution hibernation window. */
 static void GameTask(void *) {
   TickType_t lastWake = xTaskGetTickCount();
 
@@ -554,6 +630,13 @@ static void GameTask(void *) {
   uint32_t lastActivityMs   = millis();
   uint32_t hibBlockUntilMs  = HIBERNATE_GRACE_MS;
 
+  /* Sonar interrupt state -- confirm-before-commit against a stable anchor.
+     ALL of this is only ever touched while state == YAWNING/SLEEPING. */
+  float    lastStableDistance      = -1.0f;
+  bool     distanceCandidatePending = false;
+  uint32_t distanceCandidateSinceMs = 0;
+  float    distanceCandidateValue   = 0.0f;
+
   /* Seed so the first cycles before any sensor publish are still valid. */
   sd.temp = 22.0f; sd.humidity = 50.0f; sd.soundLevel = 0;
   sd.distance = -1.0f; sd.motion = false;
@@ -561,7 +644,7 @@ static void GameTask(void *) {
 
   for (;;) {
     const uint32_t now = millis();
-    bool activity = false;
+    bool activity = false;   // explicit user action only (FEED/CALM)
 
     /* ---- Queue #2: discrete events ---- */
     InputEvent e;
@@ -598,16 +681,54 @@ static void GameTask(void *) {
       haveSensor = true;
     }
 
-    /* ---- activity detection ----
-       Motion and user inputs always count as presence. Sound counts only
-       while the pet is awake: the spec is that SLEEPING is exited by motion,
-       so ambient noise must not by itself end a nap. */
-    if (sd.motion) {
-      activity = true;
+    /* ---- YAWNING/SLEEPING interrupt detection (v4, state-gated) ---- */
+    bool interrupted = false;
+    bool inSleepWindow = (state == ST_YAWNING || state == ST_SLEEPING);
+
+    if (inSleepWindow) {
+      if (sd.distance >= 0.0f) {
+        if (lastStableDistance < 0.0f) {
+          lastStableDistance = sd.distance;   // first valid reading, seed anchor
+        } else {
+          float delta = fabsf(sd.distance - lastStableDistance);
+          if (delta > DISTANCE_CHANGE_TOLERANCE_CM) {
+            if (!distanceCandidatePending) {
+              distanceCandidatePending = true;
+              distanceCandidateSinceMs = now;
+              distanceCandidateValue   = sd.distance;
+            } else if (fabsf(sd.distance - distanceCandidateValue) <=
+                       DISTANCE_CHANGE_TOLERANCE_CM) {
+              if (now - distanceCandidateSinceMs >= DISTANCE_CONFIRM_MS) {
+                interrupted              = true;
+                lastStableDistance       = sd.distance;   // commit new anchor
+                distanceCandidatePending = false;
+              }
+            } else {
+              distanceCandidateSinceMs = now;
+              distanceCandidateValue   = sd.distance;
+            }
+          } else {
+            distanceCandidatePending = false;
+          }
+        }
+      }
+
+      if (sd.soundLevel >= ACTIVITY_SOUND_THRESHOLD) {
+        interrupted = true;
+      }
+    } else {
+      distanceCandidatePending = false;
     }
-    if (state != ST_SLEEPING && sd.soundLevel >= ACTIVITY_SOUND_THRESHOLD) {
+
+    bool wokeByInterrupt = false;
+    if (inSleepWindow && interrupted) {
       activity = true;
+      wokeByInterrupt = true;
+#if VERBOSE_TRANSITIONS
+      Serial.println("[INT] YAWN/SLEEP interrupted -> waking to priority state");
+#endif
     }
+
     if (activity) {
       lastActivityMs = now;
     }
@@ -630,7 +751,7 @@ static void GameTask(void *) {
 
     /* ---- state computation, single enum, strict priority ---- */
 #if HIBERNATION_ENABLED
-    if (haveSensor && isNightHour(sd.hour) && now >= hibBlockUntilMs) {
+    if (haveSensor && isNightTime(sd.hour, sd.minute) && now >= hibBlockUntilMs) {
       state = ST_HIBERNATING;
       enterHibernation();
       /* Fresh start after wake: tick count moved, so re-seed everything. */
@@ -639,6 +760,7 @@ static void GameTask(void *) {
       hibBlockUntilMs  = millis() + POST_WAKE_BLOCK_MS;
       state            = ST_HAPPY;
       prevState        = ST_HIBERNATING;
+      distanceCandidatePending = false;
       g_cycGame++;
       vTaskDelayUntil(&lastWake, GAME_PERIOD);
       continue;
@@ -659,6 +781,16 @@ static void GameTask(void *) {
       state = ST_HUNGRY;
     } else {
       state = ST_HAPPY;
+    }
+
+    /* Entering YAWNING or SLEEPING from a non-sleep state -> reseed the
+       sonar anchor to the CURRENT reading and drop any pending candidate. */
+    bool enteringSleepWindow =
+        (state == ST_YAWNING || state == ST_SLEEPING) &&
+        !(prevState == ST_YAWNING || prevState == ST_SLEEPING);
+    if (enteringSleepWindow) {
+      lastStableDistance       = sd.distance;   // may be -1 if no valid reading yet
+      distanceCandidatePending = false;
     }
 
 #if VERBOSE_TRANSITIONS
@@ -687,6 +819,7 @@ static void GameTask(void *) {
     snap.overstim        = overstimLatched;
     snap.hot             = hot;
     snap.cold            = cold;
+    snap.wokeByInterrupt = wokeByInterrupt;
     snap.msSinceActivity = idleMs;
     xQueueOverwrite(qStateOut, &snap);
 
@@ -717,7 +850,7 @@ static void ReportTask(void *) {
       Serial.printf(
         "[STATE] %-14s | %02d:%02d:%02d | %.1fC %.0f%%RH | band %.1f-%.1f "
         "(center %.1f) | snd %4d | dist %6.1fcm | PIR %d | "
-        "HOT%d COLD%d OVER%d HUNGRY%d | idle %lus\n",
+        "HOT%d COLD%d OVER%d HUNGRY%d | INT%d | idle %lus\n",
         STATE_NAME[snap.state],
         snap.hour, snap.minute, snap.second,
         snap.temp, snap.humidity,
@@ -725,6 +858,7 @@ static void ReportTask(void *) {
         snap.soundLevel, snap.distance, snap.motion ? 1 : 0,
         snap.hot ? 1 : 0, snap.cold ? 1 : 0,
         snap.overstim ? 1 : 0, snap.hungry ? 1 : 0,
+        snap.wokeByInterrupt ? 1 : 0,
         (unsigned long)(snap.msSinceActivity / 1000));
     }
 
